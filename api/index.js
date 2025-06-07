@@ -14,14 +14,14 @@ app.use(cors()); // Allow requests from our frontend dashboard
 // This function manually handles the digest authentication process with enhanced error logging.
 const performMyenergiRequest = async (username, password) => {
     // Step 1: Query the director service to find the correct server for this serial number.
-    // This call is made WITHOUT authentication.
     let myenergiServerUrl;
     try {
-        // The director may not require auth, it just provides the server ASN in the header.
-        // We make a dummy request and expect a 401, but we only need the header from it.
-         const directorResponse = await axios.get(`https://director.myenergi.net/cgi-jstatus-${username.charAt(0)}`).catch(error => {
+        // We make a dummy request to the director and expect a 401 response.
+        // The header of that response contains the actual server address we need.
+        // The correct endpoint for an Eddi device is 'cgi-jstatus-E'.
+        const directorResponse = await axios.get(`https://director.myenergi.net/cgi-jstatus-E`).catch(error => {
             if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
-                return error.response;
+                return error.response; // This is the expected challenge containing the server address.
             }
             throw new Error('Director did not provide a server address.');
         });
