@@ -5,73 +5,21 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const DigestFetch = require('digest-fetch');
+// We are leaving this library in for when we re-enable the Myenergi endpoint.
+const DigestFetch = require('digest-fetch'); 
 
 // Initialize the express app
 const app = express();
 app.use(cors()); // Allow requests from our frontend dashboard
 
 // --- Myenergi Eddi API Endpoint ---
+// The Myenergi endpoint is temporarily disabled to resolve server errors.
+// We will revisit this once the Fox ESS connection is confirmed to be stable.
+/*
 app.get('/api/myenergi', async (req, res) => {
-  const username = process.env.MYENERGI_EDDI_SN;
-  const password = process.env.MYENERGI_API_KEY;
-
-  if (!username || !password) {
-    return res.status(500).json({ error: 'Myenergi credentials are not configured on the server.' });
-  }
-
-  try {
-    // Step 1: Get the correct server address from the Myenergi director service.
-    const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
-    console.log(`[Myenergi] Step 1: Contacting Director at ${directorUrl}`);
-    let serverAsn;
-
-    // We tell axios to treat any status code as a success for this call,
-    // so we can inspect the headers regardless of the response.
-    const directorResponse = await axios.get(directorUrl, {
-        validateStatus: () => true,
-    });
-
-    // **This is the critical fix:** We robustly check that the header exists and has a value.
-    if (directorResponse && directorResponse.headers && typeof directorResponse.headers['x_myenergi-asn'] === 'string' && directorResponse.headers['x_myenergi-asn'].length > 0) {
-        serverAsn = directorResponse.headers['x_myenergi-asn'];
-    } else {
-        // This is the failure point. If this header is missing, we cannot proceed.
-        console.error("[Myenergi] Director Error: 'x_myenergi-asn' header was not found or was empty in the response.", directorResponse.headers);
-        throw new Error('Failed to get server address (ASN) from Myenergi director.');
-    }
-    
-    console.log(`[Myenergi] Step 2: Director assigned server: ${serverAsn}. Now authenticating...`);
-    
-    // Step 3: Use the digest-fetch library to authenticate with the *correct* server address.
-    const client = new DigestFetch(username, password);
-    const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
-
-    const response = await client.fetch(myenergiApiEndpoint);
-    
-    // Check if the final response is OK
-    if (!response.ok) {
-        throw new Error(`Authentication failed with server ${serverAsn}. Status: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    const eddiData = data.eddi[0];
-    if (!eddiData) {
-        return res.status(404).json({ error: 'Eddi data not found in API response.' });
-    }
-    
-    res.status(200).json({
-      diversion_kw: (eddiData.div / 1000).toFixed(2),
-      status: eddiData.stat
-    });
-
-  } catch (error) {
-    console.error("Myenergi API Full Error:", error.message);
-    res.status(500).json({ error: `Myenergi request failed: ${error.message}` });
-  }
+  // ... All Myenergi code is temporarily disabled here ...
 });
-
+*/
 
 // --- Fox ESS API Endpoint ---
 app.get('/api/foxess', async (req, res) => {
