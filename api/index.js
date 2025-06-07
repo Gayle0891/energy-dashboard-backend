@@ -25,7 +25,7 @@ app.get('/api/myenergi', async (req, res) => {
     console.log('[Myenergi] Contacting director to find server...');
     const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
     let serverAsn;
-    
+
     // We tell axios to treat any status code as a success for this call,
     // so we can inspect the headers regardless of the response.
     const directorResponse = await axios.get(directorUrl, {
