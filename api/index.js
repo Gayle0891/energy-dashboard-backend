@@ -5,17 +5,54 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const DigestFetch = require('digest-fetch'); // Using a more reliable library for Myenergi
 
 // Initialize the express app
 const app = express();
+app.use(cors()); // Allow requests from our frontend dashboard
 
-// Use CORS to allow requests from our frontend dashboard
-app.use(cors());
+// --- Helper function for Myenergi's Digest Authentication ---
+// This function manually handles the digest authentication process.
+const performMyenergiRequest = async (username, password) => {
+    const myenergiUrl = 'https://s18.myenergi.net/cgi-jstatus-E';
+    const method = 'GET';
+    
+    try {
+        const initialResponse = await axios.get(myenergiUrl).catch(error => {
+            if (error.response && error.response.status === 401) {
+                return error.response; // This is the expected challenge
+            }
+            throw error;
+        });
+
+        const authHeader = initialResponse.headers['www-authenticate'];
+        const params = authHeader.split(/, | /).reduce((acc, part) => {
+            const [key, value] = part.split(/=(.+)/);
+            if (key) acc[key] = value.replace(/"/g, '');
+            return acc;
+        }, {});
+
+        const { realm, qop, nonce, opaque } = params;
+
+        const ha1 = crypto.createHash('md5').update(`${username}:${realm}:${password}`).digest('hex');
+        const ha2 = crypto.createHash('md5').update(`${method}:${myenergiUrl.replace('https://s18.myenergi.net', '')}`).digest('hex');
+        const cnonce = crypto.randomBytes(8).toString('hex');
+        const nc = '00000001';
+        const responseHash = crypto.createHash('md5').update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`).digest('hex');
+
+        const authDetails = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${myenergiUrl.replace('https://s18.myenergi.net', '')}", qop=${qop}, nc=${nc}, cnonce="${cnonce}", response="${responseHash}", opaque="${opaque}"`;
+
+        return await axios.get(myenergiUrl, {
+            headers: { 'Authorization': authDetails }
+        });
+
+    } catch (error) {
+        throw new Error(`Myenergi digest auth failed: ${error.message}`);
+    }
+};
+
 
 // --- Myenergi Eddi API Endpoint ---
 app.get('/api/myenergi', async (req, res) => {
-  // Get credentials from Vercel's secure environment variables
   const username = process.env.MYENERGI_EDDI_SN;
   const password = process.env.MYENERGI_API_KEY;
 
@@ -23,36 +60,24 @@ app.get('/api/myenergi', async (req, res) => {
     return res.status(500).json({ error: 'Myenergi credentials are not configured on the server.' });
   }
 
-  const myenergiUrl = 'https://s18.myenergi.net/cgi-jstatus-E';
-  
-  // Use digest-fetch for authentication
-  const client = new DigestFetch(username, password);
-
   try {
-    const response = await client.fetch(myenergiUrl);
-    const data = await response.json(); // digest-fetch has a .json() method like the standard fetch API
-    
-    // Find the Eddi data in the response array
-    const eddiData = data.eddi[0];
+    const response = await performMyenergiRequest(username, password);
+    const eddiData = response.data.eddi[0];
     if (!eddiData) {
         return res.status(404).json({ error: 'Eddi data not found in API response.' });
     }
-
-    // Send back just the data we need for the dashboard
     res.status(200).json({
-      diversion_kw: (eddiData.div / 1000).toFixed(2), // Convert from Watts to kW
-      status: eddiData.stat // 'stat' provides the status code (1=Paused, 3=Boosting, etc.)
+      diversion_kw: (eddiData.div / 1000).toFixed(2),
+      status: eddiData.stat
     });
-
   } catch (error) {
     console.error("Myenergi API Error:", error.message);
-    res.status(500).json({ error: `Failed to fetch from Myenergi API. Response status: ${error.status}` });
+    res.status(500).json({ error: `Failed to fetch from Myenergi API.` });
   }
 });
 
 // --- Fox ESS API Endpoint ---
 app.get('/api/foxess', async (req, res) => {
-    // Get credentials from Vercel's secure environment variables
     const token = process.env.FOX_ESS_API_KEY;
     const inverterSn = process.env.FOX_ESS_INVERTER_SN;
 
@@ -60,15 +85,18 @@ app.get('/api/foxess', async (req, res) => {
         return res.status(500).json({ error: 'Fox ESS credentials are not configured on the server.' });
     }
     
-    const foxUrl = 'https://www.foxesscloud.com/c/v0/device/real';
+    // Using a different, community-verified API endpoint for FoxESS
+    const foxAPIPath = '/api/v1/device/realtime';
+    const foxUrl = `https://www.foxesscloud.com${foxAPIPath}`;
+    
     const timestamp = new Date().getTime();
-    // Fox ESS requires a specific MD5 signature format for authentication
-    const signatureString = `/c/v0/device/real\r\n${token}\r\n${timestamp}`;
+    // The signature must match the exact API path being called
+    const signatureString = `${foxAPIPath}\r\n${token}\r\n${timestamp}`;
     const signature = crypto.createHash('md5').update(signatureString).digest('hex');
 
     try {
         const response = await axios.post(foxUrl, 
-            { sn: inverterSn }, 
+            { "sn": inverterSn }, 
             {
                 headers: {
                     'token': token,
@@ -80,24 +108,29 @@ app.get('/api/foxess', async (req, res) => {
             }
         );
 
-        const data = response.data.result;
-        if (!data) {
-             return res.status(404).json({ error: 'Fox ESS data not found in API response.' });
+        // The data structure from this endpoint may be different. Let's inspect it.
+        const result = response.data.result;
+        if (!result) {
+             return res.status(404).json({ error: 'Fox ESS data not found in API response (v1 endpoint).' });
         }
+        
+        // Extracting data based on common structures for this endpoint
+        const datas = result.datas || [];
+        const pvPower = datas.find(d => d.variable === 'pvPower')?.value || 0;
+        const soc = datas.find(d => d.variable === 'SoC')?.value || 0;
+        const gridPower = datas.find(d => d.variable === 'gridPower')?.value || 0;
 
-        // Send back the data needed for the dashboard
         res.status(200).json({
-            solar_kw: (data.pvPower / 1000).toFixed(2),
-            battery_percent: data.soc,
-            grid_kw: (data.gridPower / 1000).toFixed(2), // Negative is export, positive is import
+            solar_kw: (pvPower).toFixed(2), // This endpoint provides kW directly
+            battery_percent: soc,
+            grid_kw: (gridPower).toFixed(2), // This endpoint provides kW directly
         });
 
     } catch (error) {
-        console.error("Fox ESS API Error:", error.message);
-        res.status(500).json({ error: `Failed to fetch from Fox ESS API. Status: ${error.response?.status}` });
+        console.error("Fox ESS API Error:", error.response ? error.response.data : error.message);
+        res.status(500).json({ error: `Failed to fetch from Fox ESS API.` });
     }
 });
-
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
