@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const { addDigest } = require("axios-digest");
+const DigestFetch = require('digest-fetch'); // Using a new, more reliable library
 
 // Initialize the express app
 const app = express();
@@ -23,19 +23,17 @@ app.get('/api/myenergi', async (req, res) => {
     return res.status(500).json({ error: 'Myenergi credentials are not configured on the server.' });
   }
 
-  // Myenergi uses a specific server, often s18 for newer devices.
   const myenergiUrl = 'https://s18.myenergi.net/cgi-jstatus-E';
   
-  // Use axios-digest to handle the specific 'Digest' authentication Myenergi requires
-  const digestAxios = addDigest(axios);
+  // Use digest-fetch for authentication
+  const client = new DigestFetch(username, password);
 
   try {
-    const response = await digestAxios.get(myenergiUrl, {
-      auth: { username, password }
-    });
+    const response = await client.fetch(myenergiUrl);
+    const data = await response.json(); // digest-fetch has a .json() method like the standard fetch API
     
     // Find the Eddi data in the response array
-    const eddiData = response.data.eddi[0];
+    const eddiData = data.eddi[0];
     if (!eddiData) {
         return res.status(404).json({ error: 'Eddi data not found in API response.' });
     }
@@ -43,12 +41,12 @@ app.get('/api/myenergi', async (req, res) => {
     // Send back just the data we need for the dashboard
     res.status(200).json({
       diversion_kw: (eddiData.div / 1000).toFixed(2), // Convert from Watts to kW
-      status: eddiData.stat
+      status: eddiData.stat // 'stat' provides the status code (1=Paused, 3=Boosting, etc.)
     });
 
   } catch (error) {
     console.error("Myenergi API Error:", error.message);
-    res.status(500).json({ error: `Failed to fetch from Myenergi API. Status: ${error.response?.status}` });
+    res.status(500).json({ error: `Failed to fetch from Myenergi API. Response status: ${error.status}` });
   }
 });
 
@@ -56,7 +54,7 @@ app.get('/api/myenergi', async (req, res) => {
 app.get('/api/foxess', async (req, res) => {
     // Get credentials from Vercel's secure environment variables
     const token = process.env.FOX_ESS_API_KEY;
-    const inverterSn = process.env.FOX_ESS_INVERTER_SN; // We'll need to add this to Vercel
+    const inverterSn = process.env.FOX_ESS_INVERTER_SN;
 
     if (!token || !inverterSn) {
         return res.status(500).json({ error: 'Fox ESS credentials are not configured on the server.' });
