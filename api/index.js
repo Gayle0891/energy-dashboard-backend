@@ -2,7 +2,7 @@
 // It acts as a secure proxy to fetch data from the Myenergi and Fox ESS APIs.
 
 const express = require('express');
-const cors =require('cors');
+const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
 
@@ -20,22 +20,23 @@ const performMyenergiRequest = async (username, password) => {
     
     let serverAsn;
     try {
-        // We make a request and expect it to fail with a 401 error. 
-        // The server address we need is in the headers of that error response.
-        await axios.get(directorUrl);
-    } catch (error) {
-        if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
-            serverAsn = error.response.headers['x_myenergi-asn'];
-            console.log(`[Myenergi] Step 1: Director assigned server ASN: ${serverAsn}`);
-        } else {
-            // If we don't get the expected header, we cannot proceed.
-            console.error("[Myenergi] Director Error:", error.message);
-            throw new Error('Failed to get server address (ASN) from Myenergi director.');
-        }
-    }
+        // We tell axios to treat any status code as a success for this call,
+        // because we just need to inspect the headers of the response, even if it's a 401 error.
+        const directorResponse = await axios.get(directorUrl, {
+            validateStatus: () => true,
+        });
 
-    if (!serverAsn) {
-        throw new Error('Could not determine Myenergi server address (ASN). This can happen if the director service is down.');
+        serverAsn = directorResponse.headers['x_myenergi-asn'];
+        if (!serverAsn) {
+            // This is the critical failure point. If this header is missing, we cannot proceed.
+            console.error("[Myenergi] Director Error: 'x_myenergi-asn' header was not found in the response.", directorResponse.headers);
+            throw new Error("Failed to get server address (ASN) from Myenergi director.");
+        }
+        console.log(`[Myenergi] Step 1: Director assigned server ASN: ${serverAsn}`);
+
+    } catch (error) {
+        console.error("[Myenergi] Director communication failed:", error.message);
+        throw new Error('Could not contact Myenergi director service.');
     }
     
     const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
@@ -166,3 +167,4 @@ app.get('/api/foxess', async (req, res) => {
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
+
