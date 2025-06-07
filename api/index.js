@@ -11,39 +11,42 @@ const app = express();
 app.use(cors()); // Allow requests from our frontend dashboard
 
 // --- Helper function for Myenergi's Digest Authentication ---
-// This function manually handles the digest authentication process.
+// This function manually handles the digest authentication process with enhanced error logging.
 const performMyenergiRequest = async (username, password) => {
     // Step 1: Query the director service to find the correct server for this serial number
-    let myenergiUrl;
+    let myenergiServerUrl;
     try {
         const directorResponse = await axios.get(`https://director.myenergi.net/cgi-jstatus-E`, {
             headers: { 'accept': 'application/json' },
-            auth: { username, password } // The director also requires auth
+            auth: { username, password }
         });
-        myenergiUrl = `https://${directorResponse.headers['x_myenergi-asn']}`;
-        if (!myenergiUrl.includes('/cgi-jstatus-E')) {
-            myenergiUrl += '/cgi-jstatus-E';
-        }
+        myenergiServerUrl = `https://${directorResponse.headers['x_myenergi-asn']}`;
     } catch (directorError) {
-        // If the director call itself fails, we can't proceed.
-        // It's likely a credential issue.
         console.error("Myenergi Director API Error:", directorError.message);
-        throw new Error('Authentication failed at Myenergi director. Please check credentials.');
+        throw new Error('Director login failed. Check credentials.');
     }
 
+    const myenergiApiEndpoint = `${myenergiServerUrl}/cgi-jstatus-E`;
     const method = 'GET';
-    
+    const uri = '/cgi-jstatus-E';
+
     try {
         // Step 2: Make an initial request to the *correct* server to get the auth challenge
-        const initialResponse = await axios.get(myenergiUrl).catch(error => {
+        let initialResponse;
+        try {
+            await axios.get(myenergiApiEndpoint);
+        } catch (error) {
             if (error.response && error.response.status === 401) {
-                return error.response; // This is the expected challenge
+                initialResponse = error.response; // This is the expected challenge
+            } else {
+                throw new Error(`Failed to get auth challenge. Status: ${error.response?.status}`);
             }
-            throw error;
-        });
-
-        // Step 3: Parse the 'WWW-Authenticate' header from the 401 response
+        }
+        
+        // Step 3: Parse the 'WWW-Authenticate' header
         const authHeader = initialResponse.headers['www-authenticate'];
+        if (!authHeader) throw new Error("WWW-Authenticate header missing in response.");
+
         const params = authHeader.split(/, | /).reduce((acc, part) => {
             const [key, value] = part.split(/=(.+)/);
             if (key) acc[key] = value.replace(/"/g, '');
@@ -51,19 +54,20 @@ const performMyenergiRequest = async (username, password) => {
         }, {});
 
         const { realm, qop, nonce, opaque } = params;
+        if (!realm || !nonce) throw new Error("Invalid WWW-Authenticate header received.");
 
         // Step 4: Create the cryptographic hashes for the digest response
         const ha1 = crypto.createHash('md5').update(`${username}:${realm}:${password}`).digest('hex');
-        const ha2 = crypto.createHash('md5').update(`${method}:${myenergiUrl.replace(/https?:\/\/[^\/]+/, '')}`).digest('hex');
+        const ha2 = crypto.createHash('md5').update(`${method}:${uri}`).digest('hex');
         const cnonce = crypto.randomBytes(8).toString('hex');
         const nc = '00000001';
         const responseHash = crypto.createHash('md5').update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`).digest('hex');
 
         // Step 5: Construct the final 'Authorization' header
-        const authDetails = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${myenergiUrl.replace(/https?:\/\/[^\/]+/, '')}", qop=${qop}, nc=${nc}, cnonce="${cnonce}", response="${responseHash}", opaque="${opaque}"`;
+        const authDetails = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${uri}", qop=${qop}, nc=${nc}, cnonce="${cnonce}", response="${responseHash}", opaque="${opaque}"`;
 
         // Step 6: Make the fully authenticated request
-        return await axios.get(myenergiUrl, {
+        return await axios.get(myenergiApiEndpoint, {
             headers: { 'Authorization': authDetails }
         });
 
@@ -93,7 +97,7 @@ app.get('/api/myenergi', async (req, res) => {
       status: eddiData.stat
     });
   } catch (error) {
-    console.error("Myenergi API Error:", error.message);
+    console.error("Myenergi API Full Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -152,4 +156,3 @@ app.get('/api/foxess', async (req, res) => {
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
-
