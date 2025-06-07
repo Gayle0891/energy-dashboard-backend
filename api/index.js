@@ -16,17 +16,20 @@ const performMyenergiRequest = async (username, password) => {
     // Step 1: Query the director service to find the correct server for this serial number.
     let myenergiServerUrl;
     try {
-        // We make a dummy request to the director and expect a 401 response.
-        // The header of that response contains the actual server address we need.
-        // The correct endpoint for an Eddi device is 'cgi-jstatus-E'.
+        console.log("Attempting to contact Myenergi director...");
+        // The director call is made without authentication. It redirects via a header.
+        // We expect a 401 response, but we only need the header from it.
         const directorResponse = await axios.get(`https://director.myenergi.net/cgi-jstatus-E`).catch(error => {
             if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
-                return error.response; // This is the expected challenge containing the server address.
+                return error.response; // This is the expected response containing the server address.
             }
-            throw new Error('Director did not provide a server address.');
+            // If we get here, the director call failed in an unexpected way.
+            throw new Error('Director call failed or did not provide a server address.');
         });
         
-        myenergiServerUrl = `https://${directorResponse.headers['x_myenergi-asn']}`;
+        const serverAsn = directorResponse.headers['x_myenergi-asn'];
+        myenergiServerUrl = `https://${serverAsn}`;
+        console.log(`Director assigned server: ${myenergiServerUrl}`);
 
     } catch (directorError) {
         console.error("Myenergi Director API Error:", directorError.message);
@@ -39,17 +42,21 @@ const performMyenergiRequest = async (username, password) => {
 
     try {
         // Step 2: Make an initial request to the *correct* server to get the auth challenge
+        console.log(`Requesting auth challenge from: ${myenergiApiEndpoint}`);
         let initialResponse;
         try {
+            // This request is expected to fail with a 401 status code
             await axios.get(myenergiApiEndpoint);
         } catch (error) {
             if (error.response && error.response.status === 401) {
                 initialResponse = error.response; // This is the expected challenge
             } else {
-                throw new Error(`Failed to get auth challenge from server. Status: ${error.response?.status}`);
+                // This is the point of the previous error.
+                throw new Error(`Failed to get auth challenge from ${myenergiApiEndpoint}. Status: ${error.response?.status}, Message: ${error.message}`);
             }
         }
         
+        console.log("Successfully received auth challenge.");
         // Step 3: Parse the 'WWW-Authenticate' header
         const authHeader = initialResponse.headers['www-authenticate'];
         if (!authHeader) throw new Error("WWW-Authenticate header missing in response.");
@@ -64,6 +71,7 @@ const performMyenergiRequest = async (username, password) => {
         if (!realm || !nonce) throw new Error("Invalid WWW-Authenticate header received.");
 
         // Step 4: Create the cryptographic hashes for the digest response
+        console.log("Constructing digest response...");
         const ha1 = crypto.createHash('md5').update(`${username}:${realm}:${password}`).digest('hex');
         const ha2 = crypto.createHash('md5').update(`${method}:${uri}`).digest('hex');
         const cnonce = crypto.randomBytes(8).toString('hex');
@@ -74,6 +82,7 @@ const performMyenergiRequest = async (username, password) => {
         const authDetails = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${uri}", qop=${qop}, nc=${nc}, cnonce="${cnonce}", response="${responseHash}", opaque="${opaque}"`;
 
         // Step 6: Make the fully authenticated request
+        console.log("Sending final authenticated request...");
         return await axios.get(myenergiApiEndpoint, {
             headers: { 'Authorization': authDetails }
         });
