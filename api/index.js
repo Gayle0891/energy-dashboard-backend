@@ -27,28 +27,30 @@ app.get('/api/foxess', async (req, res) => {
         return res.status(500).json({ error: 'Fox ESS credentials are not configured on the server.' });
     }
     
+    // ** THE FIX: Reverted to the original, correct API path for a POST request. **
     const foxAPIPath = '/api/v1/device/realtime';
-    const urlParams = new URLSearchParams({ sn: inverterSn }).toString();
-    const fullAPIPathWithParams = `${foxAPIPath}?${urlParams}`;
-    const foxUrl = `https://www.foxesscloud.com${fullAPIPathWithParams}`;
+    const foxUrl = `https://www.foxesscloud.com${foxAPIPath}`;
     
     const timestamp = new Date().getTime();
-    const signatureString = `${fullAPIPathWithParams}\r\n${token}\r\n${timestamp}`;
+    // The signature for a POST request does not include the body or query params.
+    const signatureString = `${foxAPIPath}\r\n${token}\r\n${timestamp}`;
     const signature = crypto.createHash('md5').update(signatureString).digest('hex');
 
     try {
-        const response = await axios.get(foxUrl, {
-            headers: {
-                'token': token,
-                'timestamp': timestamp,
-                'signature': signature,
-                'lang': 'en',
-                'Content-Type': 'application/json'
+        // ** THE FIX: Changed from axios.get back to axios.post **
+        const response = await axios.post(foxUrl, 
+            { "sn": inverterSn }, // The device serial number is sent in the request body.
+            {
+                headers: {
+                    'token': token,
+                    'timestamp': timestamp,
+                    'signature': signature,
+                    'lang': 'en',
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }
             }
-        });
-
-        // ** DIAGNOSTIC LOGGING: This will show us the exact response from the server **
-        console.log("Full Fox ESS Response Body:", JSON.stringify(response.data, null, 2));
+        );
 
         const result = response.data.result;
         if (!result) {
@@ -69,7 +71,12 @@ app.get('/api/foxess', async (req, res) => {
     } catch (error) {
         let errorMessage = error.message;
         if (error.response && error.response.data) {
-            errorMessage = JSON.stringify(error.response.data);
+            // Attempt to parse the error response data, but fall back to a string if it's not JSON
+            try {
+                 errorMessage = JSON.stringify(error.response.data);
+            } catch (e) {
+                 errorMessage = error.response.data;
+            }
         }
         console.error("Fox ESS API Error:", errorMessage);
         res.status(500).json({ error: `Fox ESS API request failed: ${errorMessage}` });
@@ -78,4 +85,5 @@ app.get('/api/foxess', async (req, res) => {
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
+
 
