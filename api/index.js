@@ -27,46 +27,49 @@ app.get('/api/foxess', async (req, res) => {
         return res.status(500).json({ error: 'Fox ESS credentials are not configured on the server.' });
     }
     
+    // This is the API path we are calling.
     const foxAPIPath = '/api/v1/device/realtime';
-    const foxUrl = `https://www.foxesscloud.com${foxAPIPath}`;
+    
+    // For a GET request, parameters are added to the URL.
+    const urlParams = new URLSearchParams({ sn: inverterSn }).toString();
+    const fullAPIPathWithParams = `${foxAPIPath}?${urlParams}`;
+    
+    const foxUrl = `https://www.foxesscloud.com${fullAPIPathWithParams}`;
     
     const timestamp = new Date().getTime();
-    const signatureString = `${foxAPIPath}\r\n${token}\r\n${timestamp}`;
+    // The signature must use the full path including the query parameters.
+    const signatureString = `${fullAPIPathWithParams}\r\n${token}\r\n${timestamp}`;
     const signature = crypto.createHash('md5').update(signatureString).digest('hex');
 
     try {
-        const response = await axios.post(foxUrl, 
-            { "sn": inverterSn }, 
-            {
-                headers: {
-                    'token': token,
-                    'timestamp': timestamp,
-                    'signature': signature,
-                    'lang': 'en',
-                    'Content-Type': 'application/json'
-                }
+        // ** THE FIX: Changed from axios.post to axios.get **
+        const response = await axios.get(foxUrl, {
+            headers: {
+                'token': token,
+                'timestamp': timestamp,
+                'signature': signature,
+                'lang': 'en',
+                'Content-Type': 'application/json'
             }
-        );
+        });
 
         const result = response.data.result;
         if (!result) {
-             return res.status(404).json({ error: 'Fox ESS data not found in API response (v1 endpoint).' });
+             return res.status(404).json({ error: 'Fox ESS data not found in API response.' });
         }
         
         const datas = result.datas || [];
-        const pvPower = datas.find(d => d.variable === 'pvPower')?.value || 0;
-        const soc = datas.find(d => d.variable === 'SoC')?.value || 0;
-        const gridPower = datas.find(d => d.variable === 'gridPower')?.value || 0;
+        const pvPowerData = datas.find(d => d.variable === 'pvPower');
+        const socData = datas.find(d => d.variable === 'SoC');
+        const gridPowerData = datas.find(d => d.variable === 'gridPower');
 
         res.status(200).json({
-            solar_kw: (pvPower).toFixed(2),
-            battery_percent: soc,
-            grid_kw: (gridPower).toFixed(2),
+            solar_kw: pvPowerData ? pvPowerData.value : 0,
+            battery_percent: socData ? socData.value : 0,
+            grid_kw: gridPowerData ? gridPowerData.value : 0,
         });
 
     } catch (error) {
-        // This is the updated error handling block.
-        // It will now send back a much more detailed error message.
         let errorMessage = error.message;
         if (error.response && error.response.data) {
             errorMessage = JSON.stringify(error.response.data);
@@ -78,3 +81,4 @@ app.get('/api/foxess', async (req, res) => {
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
+
