@@ -15,27 +15,28 @@ app.use(cors()); // Allow requests from our frontend dashboard
 const performMyenergiRequest = async (username, password) => {
     
     // Step 1: Get the correct server address from the Myenergi director service.
-    // We expect a 401 error, but the server address we need is in the response header.
     const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
     console.log(`Contacting Director at: ${directorUrl}`);
     
     let serverAsn;
     try {
-        await axios.get(directorUrl);
-    } catch (error) {
-        if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
-            serverAsn = error.response.headers['x_myenergi-asn'];
-            console.log(`Director assigned server ASN: ${serverAsn}`);
-        } else {
-            console.error("Myenergi Director Error:", error.message);
-            throw new Error('Failed to get server address (ASN) from Myenergi director.');
+        // We make the request and tell axios to accept any status code,
+        // as we expect a 401 but need to read its headers.
+        const directorResponse = await axios.get(directorUrl, {
+            validateStatus: () => true,
+        });
+
+        serverAsn = directorResponse.headers['x_myenergi-asn'];
+        if (!serverAsn) {
+            throw new Error("Myenergi director response did not contain 'x_myenergi-asn' header.");
         }
-    }
+        console.log(`Director assigned server ASN: ${serverAsn}`);
 
-    if (!serverAsn) {
-        throw new Error('Could not determine Myenergi server address (ASN).');
+    } catch (error) {
+        console.error("Myenergi Director communication failed:", error.message);
+        throw new Error('Could not contact Myenergi director service.');
     }
-
+    
     const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
     const method = 'GET';
     const uri = '/cgi-jstatus-E';
@@ -43,7 +44,6 @@ const performMyenergiRequest = async (username, password) => {
 
     try {
         // Step 2: Make an initial request to the *correct* server to get the auth challenge.
-        // This request is also expected to fail with a 401 status.
         const challengeResponse = await axios.get(myenergiApiEndpoint).catch(error => {
             if (error.response && error.response.status === 401) {
                 return error.response; // This is the expected challenge.
