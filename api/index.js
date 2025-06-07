@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-const DigestFetch = require('digest-fetch'); // Using the library to handle authentication automatically
+const DigestFetch = require('digest-fetch');
 
 // Initialize the express app
 const app = express();
@@ -19,30 +19,59 @@ app.get('/api/myenergi', async (req, res) => {
   if (!username || !password) {
     return res.status(500).json({ error: 'Myenergi credentials are not configured on the server.' });
   }
-  
-  // The library will handle contacting the director and the final server automatically.
-  const client = new DigestFetch(username, password);
-  const myenergiUrl = 'https://director.myenergi.net/cgi-jstatus-E';
 
   try {
-    console.log(`[Myenergi] Attempting to fetch data via digest-fetch from ${myenergiUrl}`);
-    const response = await client.fetch(myenergiUrl);
+    // Step 1: Use a simple axios call to get the server address from the director's response header.
+    // We expect this to fail with a 401 error, but that's okay.
+    console.log('[Myenergi] Contacting director to find server...');
+    const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
+    let serverAsn;
+    
+    try {
+        await axios.get(directorUrl);
+    } catch (error) {
+        if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
+            serverAsn = error.response.headers['x_myenergi-asn'];
+        } else {
+            throw new Error('Failed to get server address (ASN) from Myenergi director.');
+        }
+    }
+    
+    if (!serverAsn) {
+        throw new Error('Could not determine Myenergi server address.');
+    }
+
+    console.log(`[Myenergi] Director assigned server: ${serverAsn}. Now authenticating...`);
+    
+    // Step 2: Use the digest-fetch library to authenticate with the *correct* server address.
+    const client = new DigestFetch(username, password);
+    const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
+
+    const response = await client.fetch(myenergiApiEndpoint);
+    
+    // Check if the final response is OK
+    if (!response.ok) {
+        throw new Error(`Authentication failed with server ${serverAsn}. Status: ${response.status}`);
+    }
+    
     const data = await response.json();
     
     const eddiData = data.eddi[0];
     if (!eddiData) {
         return res.status(404).json({ error: 'Eddi data not found in API response.' });
     }
+    
     res.status(200).json({
       diversion_kw: (eddiData.div / 1000).toFixed(2),
       status: eddiData.stat
     });
+
   } catch (error) {
-    console.error("Myenergi API Full Error:", error);
-    // Provide a more specific error message from the library if available
+    console.error("Myenergi API Full Error:", error.message);
     res.status(500).json({ error: `Myenergi request failed: ${error.message}` });
   }
 });
+
 
 // --- Fox ESS API Endpoint ---
 app.get('/api/foxess', async (req, res) => {
@@ -98,5 +127,3 @@ app.get('/api/foxess', async (req, res) => {
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
-
-
