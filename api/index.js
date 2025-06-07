@@ -13,17 +13,24 @@ app.use(cors()); // Allow requests from our frontend dashboard
 // --- Helper function for Myenergi's Digest Authentication ---
 // This function manually handles the digest authentication process with enhanced error logging.
 const performMyenergiRequest = async (username, password) => {
-    // Step 1: Query the director service to find the correct server for this serial number
+    // Step 1: Query the director service to find the correct server for this serial number.
+    // This call is made WITHOUT authentication.
     let myenergiServerUrl;
     try {
-        const directorResponse = await axios.get(`https://director.myenergi.net/cgi-jstatus-E`, {
-            headers: { 'accept': 'application/json' },
-            auth: { username, password }
+        // The director may not require auth, it just provides the server ASN in the header.
+        // We make a dummy request and expect a 401, but we only need the header from it.
+         const directorResponse = await axios.get(`https://director.myenergi.net/cgi-jstatus-${username.charAt(0)}`).catch(error => {
+            if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
+                return error.response;
+            }
+            throw new Error('Director did not provide a server address.');
         });
+        
         myenergiServerUrl = `https://${directorResponse.headers['x_myenergi-asn']}`;
+
     } catch (directorError) {
         console.error("Myenergi Director API Error:", directorError.message);
-        throw new Error('Director login failed. Check credentials.');
+        throw new Error('Failed to get server address from Myenergi director.');
     }
 
     const myenergiApiEndpoint = `${myenergiServerUrl}/cgi-jstatus-E`;
@@ -39,7 +46,7 @@ const performMyenergiRequest = async (username, password) => {
             if (error.response && error.response.status === 401) {
                 initialResponse = error.response; // This is the expected challenge
             } else {
-                throw new Error(`Failed to get auth challenge. Status: ${error.response?.status}`);
+                throw new Error(`Failed to get auth challenge from server. Status: ${error.response?.status}`);
             }
         }
         
