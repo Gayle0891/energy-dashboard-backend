@@ -1,12 +1,10 @@
 // This is the backend server that will run on Vercel.
-// It acts as a secure proxy to fetch data from the Myenergi and Fox ESS APIs.
+// It acts as a secure proxy to fetch data from the Fox ESS API.
 
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
-// We are leaving this library in for when we re-enable the Myenergi endpoint.
-const DigestFetch = require('digest-fetch'); 
 
 // Initialize the express app
 const app = express();
@@ -14,7 +12,6 @@ app.use(cors()); // Allow requests from our frontend dashboard
 
 // --- Myenergi Eddi API Endpoint ---
 // The Myenergi endpoint is temporarily disabled to resolve server errors.
-// We will revisit this once the Fox ESS connection is confirmed to be stable.
 /*
 app.get('/api/myenergi', async (req, res) => {
   // ... All Myenergi code is temporarily disabled here ...
@@ -68,8 +65,14 @@ app.get('/api/foxess', async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Fox ESS API Error:", error.response ? error.response.data : error.message);
-        res.status(500).json({ error: `Failed to fetch from Fox ESS API.` });
+        // This is the updated error handling block.
+        // It will now send back a much more detailed error message.
+        let errorMessage = error.message;
+        if (error.response && error.response.data) {
+            errorMessage = JSON.stringify(error.response.data);
+        }
+        console.error("Fox ESS API Error:", errorMessage);
+        res.status(500).json({ error: `Fox ESS API request failed: ${errorMessage}` });
     }
 });
 
