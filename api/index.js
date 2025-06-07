@@ -21,9 +21,9 @@ app.get('/api/myenergi', async (req, res) => {
   }
 
   try {
-    // Step 1: Use a simple axios call to get the server address from the director's response header.
-    console.log('[Myenergi] Contacting director to find server...');
+    // Step 1: Get the correct server address from the Myenergi director service.
     const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
+    console.log(`[Myenergi] Step 1: Contacting Director at ${directorUrl}`);
     let serverAsn;
 
     // We tell axios to treat any status code as a success for this call,
@@ -32,17 +32,18 @@ app.get('/api/myenergi', async (req, res) => {
         validateStatus: () => true,
     });
 
-    if (directorResponse.headers && directorResponse.headers['x_myenergi-asn']) {
+    // **This is the critical fix:** We robustly check that the header exists and has a value.
+    if (directorResponse && directorResponse.headers && typeof directorResponse.headers['x_myenergi-asn'] === 'string' && directorResponse.headers['x_myenergi-asn'].length > 0) {
         serverAsn = directorResponse.headers['x_myenergi-asn'];
     } else {
-        // This is the critical failure point. If this header is missing, we cannot proceed.
-        console.error("[Myenergi] Director Error: 'x_myenergi-asn' header was not found in the response.", directorResponse.headers);
+        // This is the failure point. If this header is missing, we cannot proceed.
+        console.error("[Myenergi] Director Error: 'x_myenergi-asn' header was not found or was empty in the response.", directorResponse.headers);
         throw new Error('Failed to get server address (ASN) from Myenergi director.');
     }
     
-    console.log(`[Myenergi] Director assigned server: ${serverAsn}. Now authenticating...`);
+    console.log(`[Myenergi] Step 2: Director assigned server: ${serverAsn}. Now authenticating...`);
     
-    // Step 2: Use the digest-fetch library to authenticate with the *correct* server address.
+    // Step 3: Use the digest-fetch library to authenticate with the *correct* server address.
     const client = new DigestFetch(username, password);
     const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
 
