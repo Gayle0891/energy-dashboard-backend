@@ -11,50 +11,41 @@ const app = express();
 app.use(cors()); // Allow requests from our frontend dashboard
 
 // --- Helper function for Myenergi's Digest Authentication ---
-// This function manually handles the digest authentication process with a more robust flow.
+// This function manually handles the digest authentication process with enhanced error logging.
 const performMyenergiRequest = async (username, password) => {
-    
-    // Step 1: Get the correct server address from the Myenergi director service.
-    const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
-    console.log(`Contacting Director at: ${directorUrl}`);
-    
-    let serverAsn;
     try {
-        // We make the request and tell axios to accept any status code,
-        // as we expect a 401 but need to read its headers.
-        const directorResponse = await axios.get(directorUrl, {
-            validateStatus: () => true,
-        });
+        // Step 1: Contact the Myenergi director to get the correct server address.
+        const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
+        console.log(`[Myenergi] Step 1: Contacting Director at ${directorUrl}`);
+        const directorResponse = await axios.get(directorUrl, { validateStatus: () => true });
 
-        serverAsn = directorResponse.headers['x_myenergi-asn'];
+        // Step 2: Extract the server address (ASN) from the response headers.
+        const serverAsn = directorResponse.headers['x_myenergi-asn'];
         if (!serverAsn) {
-            throw new Error("Myenergi director response did not contain 'x_myenergi-asn' header.");
+            console.error('[Myenergi] Director response headers:', directorResponse.headers);
+            throw new Error("Director response did not contain 'x_myenergi-asn' header.");
         }
-        console.log(`Director assigned server ASN: ${serverAsn}`);
+        console.log(`[Myenergi] Step 2: Director assigned server: ${serverAsn}`);
+        
+        // Step 3: Request the authentication challenge from the correct server.
+        const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
+        const method = 'GET';
+        const uri = '/cgi-jstatus-E';
+        console.log(`[Myenergi] Step 3: Requesting auth challenge from ${myenergiApiEndpoint}`);
 
-    } catch (error) {
-        console.error("Myenergi Director communication failed:", error.message);
-        throw new Error('Could not contact Myenergi director service.');
-    }
-    
-    const myenergiApiEndpoint = `https://${serverAsn}/cgi-jstatus-E`;
-    const method = 'GET';
-    const uri = '/cgi-jstatus-E';
-    console.log(`Authenticating with server: ${myenergiApiEndpoint}`);
-
-    try {
-        // Step 2: Make an initial request to the *correct* server to get the auth challenge.
         const challengeResponse = await axios.get(myenergiApiEndpoint).catch(error => {
             if (error.response && error.response.status === 401) {
-                return error.response; // This is the expected challenge.
+                return error.response; // This is the expected challenge response.
             }
-            throw new Error(`Failed to get auth challenge from server. Status: ${error.response?.status}`);
+            // If it fails for any other reason, throw a detailed error.
+            throw new Error(`Failed to get auth challenge. Server returned status: ${error.response?.status}`);
         });
-
-        // Step 3: Parse the 'WWW-Authenticate' header from the challenge response.
+        
+        console.log("[Myenergi] Step 3: Successfully received auth challenge.");
+        // Step 4: Parse the challenge header.
         const authHeader = challengeResponse.headers['www-authenticate'];
         if (!authHeader) throw new Error("WWW-Authenticate header missing in challenge response.");
-
+        
         const params = authHeader.split(/, | /).reduce((acc, part) => {
             const [key, value] = part.split(/=(.+)/);
             if (key) acc[key] = value.replace(/"/g, '');
@@ -62,26 +53,25 @@ const performMyenergiRequest = async (username, password) => {
         }, {});
 
         const { realm, qop, nonce, opaque } = params;
-        if (!realm || !nonce) throw new Error("Invalid WWW-Authenticate header received.");
-
-        // Step 4: Create the cryptographic hashes for the digest response.
+        if (!realm || !nonce) throw new Error("Invalid WWW-Authenticate header received from server.");
+        
+        console.log("[Myenergi] Step 4: Successfully parsed challenge.");
+        // Step 5: Construct the digest response and send the final authenticated request.
         const ha1 = crypto.createHash('md5').update(`${username}:${realm}:${password}`).digest('hex');
         const ha2 = crypto.createHash('md5').update(`${method}:${uri}`).digest('hex');
         const cnonce = crypto.randomBytes(8).toString('hex');
         const nc = '00000001';
         const responseHash = crypto.createHash('md5').update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`).digest('hex');
 
-        // Step 5: Construct the final 'Authorization' header.
         const authDetails = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${uri}", qop=${qop}, nc=${nc}, cnonce="${cnonce}", response="${responseHash}", opaque="${opaque}"`;
-
-        // Step 6: Make the fully authenticated request.
-        console.log("Sending final authenticated request.");
-        return await axios.get(myenergiApiEndpoint, {
-            headers: { 'Authorization': authDetails }
-        });
+        
+        console.log("[Myenergi] Step 5: Sending final authenticated request.");
+        return await axios.get(myenergiApiEndpoint, { headers: { 'Authorization': authDetails } });
 
     } catch (error) {
-        throw new Error(`Myenergi digest auth failed: ${error.message}`);
+        // This single catch block will now handle all errors in the process.
+        console.error("[Myenergi] Full error in performMyenergiRequest:", error.message);
+        throw new Error(`Myenergi request failed: ${error.message}`);
     }
 };
 
