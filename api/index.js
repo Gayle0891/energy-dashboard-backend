@@ -22,25 +22,24 @@ app.get('/api/myenergi', async (req, res) => {
 
   try {
     // Step 1: Use a simple axios call to get the server address from the director's response header.
-    // We expect this to fail with a 401 error, but that's okay.
     console.log('[Myenergi] Contacting director to find server...');
     const directorUrl = 'https://director.myenergi.net/cgi-jstatus-E';
     let serverAsn;
     
-    try {
-        await axios.get(directorUrl);
-    } catch (error) {
-        if (error.response && error.response.headers && error.response.headers['x_myenergi-asn']) {
-            serverAsn = error.response.headers['x_myenergi-asn'];
-        } else {
-            throw new Error('Failed to get server address (ASN) from Myenergi director.');
-        }
+    // We tell axios to treat any status code as a success for this call,
+    // so we can inspect the headers regardless of the response.
+    const directorResponse = await axios.get(directorUrl, {
+        validateStatus: () => true,
+    });
+
+    if (directorResponse.headers && directorResponse.headers['x_myenergi-asn']) {
+        serverAsn = directorResponse.headers['x_myenergi-asn'];
+    } else {
+        // This is the critical failure point. If this header is missing, we cannot proceed.
+        console.error("[Myenergi] Director Error: 'x_myenergi-asn' header was not found in the response.", directorResponse.headers);
+        throw new Error('Failed to get server address (ASN) from Myenergi director.');
     }
     
-    if (!serverAsn) {
-        throw new Error('Could not determine Myenergi server address.');
-    }
-
     console.log(`[Myenergi] Director assigned server: ${serverAsn}. Now authenticating...`);
     
     // Step 2: Use the digest-fetch library to authenticate with the *correct* server address.
