@@ -27,22 +27,16 @@ app.get('/api/foxess', async (req, res) => {
         return res.status(500).json({ error: 'Fox ESS credentials are not configured on the server.' });
     }
     
-    // This is the API path we are calling.
     const foxAPIPath = '/api/v1/device/realtime';
-    
-    // For a GET request, parameters are added to the URL.
     const urlParams = new URLSearchParams({ sn: inverterSn }).toString();
     const fullAPIPathWithParams = `${foxAPIPath}?${urlParams}`;
-    
     const foxUrl = `https://www.foxesscloud.com${fullAPIPathWithParams}`;
     
     const timestamp = new Date().getTime();
-    // The signature must use the full path including the query parameters.
     const signatureString = `${fullAPIPathWithParams}\r\n${token}\r\n${timestamp}`;
     const signature = crypto.createHash('md5').update(signatureString).digest('hex');
 
     try {
-        // ** THE FIX: Changed from axios.post to axios.get **
         const response = await axios.get(foxUrl, {
             headers: {
                 'token': token,
@@ -52,6 +46,9 @@ app.get('/api/foxess', async (req, res) => {
                 'Content-Type': 'application/json'
             }
         });
+
+        // ** DIAGNOSTIC LOGGING: This will show us the exact response from the server **
+        console.log("Full Fox ESS Response Body:", JSON.stringify(response.data, null, 2));
 
         const result = response.data.result;
         if (!result) {
