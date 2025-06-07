@@ -3,7 +3,7 @@
 
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
+const axios =require('axios');
 const crypto = require('crypto');
 
 // Initialize the express app
@@ -27,19 +27,20 @@ app.get('/api/foxess', async (req, res) => {
         return res.status(500).json({ error: 'Fox ESS credentials are not configured on the server.' });
     }
     
-    // ** THE FIX: Reverted to the original, correct API path for a POST request. **
     const foxAPIPath = '/api/v1/device/realtime';
     const foxUrl = `https://www.foxesscloud.com${foxAPIPath}`;
     
     const timestamp = new Date().getTime();
-    // The signature for a POST request does not include the body or query params.
-    const signatureString = `${foxAPIPath}\r\n${token}\r\n${timestamp}`;
+
+    // ** THE FIX: The signature path should NOT include the leading slash **
+    // It is a subtle but critical difference required by their API.
+    const signaturePath = 'api/v1/device/realtime';
+    const signatureString = `${signaturePath}\r\n${token}\r\n${timestamp}`;
     const signature = crypto.createHash('md5').update(signatureString).digest('hex');
 
     try {
-        // ** THE FIX: Changed from axios.get back to axios.post **
         const response = await axios.post(foxUrl, 
-            { "sn": inverterSn }, // The device serial number is sent in the request body.
+            { "sn": inverterSn }, 
             {
                 headers: {
                     'token': token,
@@ -51,6 +52,12 @@ app.get('/api/foxess', async (req, res) => {
                 }
             }
         );
+        
+        // This is a new check. If the response contains an 'errno' field, it's an API-level error.
+        if (response.data.errno !== 0) {
+            console.error("Fox ESS API returned an error:", response.data);
+            return res.status(400).json({ error: `Fox ESS API Error: ${response.data.msg || 'Unknown error'}` });
+        }
 
         const result = response.data.result;
         if (!result) {
@@ -71,7 +78,6 @@ app.get('/api/foxess', async (req, res) => {
     } catch (error) {
         let errorMessage = error.message;
         if (error.response && error.response.data) {
-            // Attempt to parse the error response data, but fall back to a string if it's not JSON
             try {
                  errorMessage = JSON.stringify(error.response.data);
             } catch (e) {
@@ -85,5 +91,3 @@ app.get('/api/foxess', async (req, res) => {
 
 // Export the app to be used by Vercel's serverless environment
 module.exports = app;
-
-
