@@ -4,7 +4,8 @@
   "description": "Backend proxy for the personal energy dashboard.",
   "main": "api/index.js",
   "scripts": {
-    "start": "node api/index.js"
+    "start": "node api/index.js",
+    "build": "echo 'No build step required'"
   },
   "dependencies": {
     "axios": "^0.26.1",
